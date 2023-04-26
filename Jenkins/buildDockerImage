@@ -1,0 +1,65 @@
+pipeline {
+    agent {
+        node {
+            label '<node name where the build run>'
+            customWorkspace WORKSPACE_MAIN
+        }
+    }
+    options {
+        timeout(time: 1, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '50'))
+        skipDefaultCheckout()
+    }
+    stages {
+        stage('buildImage') {
+            steps {
+                sh '''#!/bin/bash -l
+                    cd $WORKSPACE_MAIN
+
+                '''
+                withAWS(region: env.REGION) {
+                    withCredentials([[
+                      $class: 'AmazonWebServicesCredentialsBinding',
+                      credentialsId: env.ENV,
+                      accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                      secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    ]]) {
+                        withCredentials([
+                            string(
+                                credentialsId: 'AWS_SES',
+                                variable: 'AWS_SES_PASSWORD'
+                            )
+                        ]) {
+                        sh '''#!/bin/bash -l
+                            set -euo
+
+                            cd $WORKSPACE_MAIN
+
+                            tar -xzf dockersupport.tar.gz
+
+                            aws ecr get-login-password --region ${REGION} |
+                            sudo docker login \
+                                --username AWS \
+                                --password-stdin \
+                                "${ACCOUNT_NO}.dkr.ecr.${REGION}.amazonaws.com"
+
+                            sudo docker build \
+                                -f ${PATH_TO_DOCKERFILE} \
+                                --build-arg ACCOUNT_ID=${ACCOUNT_NO} \
+                                --build-arg APP=${APP} \
+                                --build-arg ENV=${ENV} \
+                                --build-arg PORT=${PORT} \
+                                --build-arg REGION=${REGION} \
+                                --build-arg AWS_SES_PASSWORD="${AWS_SES_PASSWORD}" \
+                                -t ${ACCOUNT_NO[$ENV]}.dkr.ecr.${REGION}.amazonaws.com/${APP}:${BRANCH,,}-${BUILD_NUMBER_MAIN}  \
+                                -t ${ACCOUNT_NO[$ENV]}.dkr.ecr.${REGION}.amazonaws.com/${APP}:latest ${WORKSPACE_MAIN}
+
+                            sudo docker push ${ACCOUNT_NO}.dkr.ecr.${REGION}.amazonaws.com/${APP}:${BUILD_NUMBER_MAIN}
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
